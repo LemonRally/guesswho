@@ -25,13 +25,78 @@ class AnalyzeNetwork:
         """
         returns a dict with all information about the device with given MAC address
         """
-        raise NotImplementedError
+        info = {}
+        packets = rdpcap(self.pcap_path)
+        for packet in packets:
+            if packet.haslayer("Ether"):
+                if packet["Ether"].src == mac or packet["Ether"].dst == mac:
+                    info["MAC"] = mac
+                    try:
+                        vendor = MacLookup().lookup(mac)
+                    except Exception:
+                        vendor = "Unknown"
+                    info["Vendor"] = vendor
+                    if packet.haslayer("IP"):
+                        ip = (
+                            packet["IP"].src
+                            if packet["Ether"].src == mac
+                            else packet["IP"].dst
+                        )
+                        info["IP"] = ip
+                    else:
+                        info["IP"] = "Unknown"
+
+                    if packet.haslayer("IPv6"):
+                        ipv6 = (
+                            packet["IPv6"].src
+                            if packet["IP"].src == ip
+                            else packet["IPv6"].dst
+                        )
+                        info["IPv6"] = ipv6
+                    else:
+                        info["IPv6"] = "Unknown"
+
+                    return info
+        return None
 
     def get_info_by_ip(self, ip):
         """
         returns a dict with all information about the device with given IP address
         """
-        raise NotImplementedError
+        info = {}
+        packets = rdpcap(self.pcap_path)
+        for packet in packets:
+            if packet.haslayer("IP"):
+                if packet["IP"].src == ip or packet["IP"].dst == ip:
+                    if packet.haslayer("Ether"):
+                        mac = (
+                            packet["Ether"].src
+                            if packet["IP"].src == ip
+                            else packet["Ether"].dst
+                        )
+                        info["MAC"] = mac
+                        try:
+                            vendor = MacLookup().lookup(mac)
+                        except Exception:
+                            vendor = "Unknown"
+                        info["Vendor"] = vendor
+                    else:
+                        info["MAC"] = "Unknown"
+                        info["Vendor"] = "Unknown"
+
+                    if packet.haslayer("IPv6"):
+                        ipv6 = (
+                            packet["IPv6"].src
+                            if packet["IP"].src == ip
+                            else packet["IPv6"].dst
+                        )
+                        info["IPv6"] = ipv6
+                    else:
+                        info["IPv6"] = "Unknown"
+
+                    info["IP"] = ip
+                    return info
+        return None
 
     def get_info(self):
         """
@@ -49,6 +114,13 @@ class AnalyzeNetwork:
             else:
                 sender_info["IP"] = "Unknown"
                 receiver_info["IP"] = "Unknown"
+
+            if packet.haslayer("IPv6"):
+                sender_info["IPv6"] = packet["IPv6"].src
+                receiver_info["IPv6"] = packet["IPv6"].dst
+            else:
+                sender_info["IPv6"] = "Unknown"
+                receiver_info["IPv6"] = "Unknown"
 
             if packet.haslayer("Ether"):
                 # for sender
@@ -78,6 +150,23 @@ class AnalyzeNetwork:
             if receiver_info not in result:
                 result.append(receiver_info)
         return result
+
+    def guess_os(self, ip):
+        """returns assumed operating system based on ttl value of packets from given IP"""
+        # ip is expected to be the return type of get_info_by_ip or similar
+        ip = ip["IP"]
+        packets = rdpcap(self.pcap_path)
+        for packet in packets:
+            if packet.haslayer("IP") and packet["IP"].src == ip:
+                ttl = packet["IP"].ttl
+                if ttl <= 64:
+                    return ["Linux", "Unix", "MacOS"]
+                if ttl <= 128:
+                    return "Windows"
+                if ttl <= 255:
+                    return ["Cisco", "Network Device"]
+                return "Unknown"
+        return "Unknown"
 
     def __repr__(self):
         raise NotImplementedError
