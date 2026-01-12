@@ -1,3 +1,7 @@
+from scapy.all import rdpcap
+from mac_vendor_lookup import MacLookup
+
+
 class AnalyzeNetwork:
     def __init__(self, pcap_path):
         """
@@ -33,7 +37,47 @@ class AnalyzeNetwork:
         """
         returns a list of dicts with information about every device in the pcap
         """
-        raise NotImplementedError
+        packets = rdpcap(self.pcap_path)
+        result = []
+        for packet in packets:
+            sender_info = {}
+            receiver_info = {}
+
+            if packet.haslayer("IP"):
+                sender_info["IP"] = packet["IP"].src
+                receiver_info["IP"] = packet["IP"].dst
+            else:
+                sender_info["IP"] = "Unknown"
+                receiver_info["IP"] = "Unknown"
+
+            if packet.haslayer("Ether"):
+                # for sender
+                sender_info["MAC"] = packet["Ether"].src
+                try:
+                    vendor = MacLookup().lookup(sender_info["MAC"])
+                except Exception:
+                    vendor = "Unknown"
+                sender_info["Vendor"] = vendor
+
+                # for receiver
+                receiver_info["MAC"] = packet["Ether"].dst
+                try:
+                    vendor = MacLookup().lookup(receiver_info["MAC"])
+                except Exception:
+                    vendor = "Unknown"
+                receiver_info["Vendor"] = vendor
+            else:
+                sender_info["MAC"] = "Unknown"
+                sender_info["Vendor"] = "Unknown"
+                receiver_info["MAC"] = "Unknown"
+                receiver_info["Vendor"] = "Unknown"
+
+            # check if sender_info is already in result
+            if sender_info not in result:
+                result.append(sender_info)
+            if receiver_info not in result:
+                result.append(receiver_info)
+        return result
 
     def __repr__(self):
         raise NotImplementedError
