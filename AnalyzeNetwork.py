@@ -26,10 +26,12 @@ class AnalyzeNetwork:
         returns a dict with all information about the device with given MAC address
         """
         info = {}
+        count = 0
         packets = rdpcap(self.pcap_path)
         for packet in packets:
             if packet.haslayer("Ether"):
                 if packet["Ether"].src == mac or packet["Ether"].dst == mac:
+                    count += 1
                     info["MAC"] = mac
                     try:
                         vendor = MacLookup().lookup(mac)
@@ -57,20 +59,39 @@ class AnalyzeNetwork:
                         info["IPv6"] = "Unknown"
 
                     if packet.time:
-                        info["Time"] = str(packet.time)
+                        info["First Seen"] = str(packet.time)
 
-                    return info
-        return None
+                    info["Count"] = count
+
+                    if packet.haslayer("TCP"):
+                        user_agent = self.get_user_agent(packet["TCP"])
+
+                        if packet["IP"].src == ip and packet["TCP"].sport:
+                            info["Open Ports"] = info.get("Open Ports", []) + [
+                                packet["TCP"].sport
+                            ]
+                            if user_agent:
+                                info["User Agent"] = user_agent
+                        elif packet["IP"].dst == ip and packet["TCP"].dport:
+                            info["Open Ports"] = info.get("Open Ports", []) + [
+                                packet["TCP"].dport
+                            ]
+                            if user_agent:
+                                info["http server"] = True
+
+        return info if info else None
 
     def get_info_by_ip(self, ip):
         """
         returns a dict with all information about the device with given IP address
         """
         info = {}
+        count = 0
         packets = rdpcap(self.pcap_path)
         for packet in packets:
             if packet.haslayer("IP"):
                 if packet["IP"].src == ip or packet["IP"].dst == ip:
+                    count += 1
                     if packet.haslayer("Ether"):
                         mac = (
                             packet["Ether"].src
@@ -98,11 +119,27 @@ class AnalyzeNetwork:
                         info["IPv6"] = "Unknown"
 
                     if packet.time:
-                        info["Time"] = str(packet.time)
+                        info["First Seen"] = str(packet.time)
+
+                    if packet.haslayer("TCP"):
+                        user_agent = self.get_user_agent(packet["TCP"])
+
+                        if packet["IP"].src == ip and packet["TCP"].sport:
+                            info["Open Ports"] = info.get("Open Ports", []) + [
+                                packet["TCP"].sport
+                            ]
+                            if user_agent:
+                                info["User Agent"] = user_agent
+                        elif packet["IP"].dst == ip and packet["TCP"].dport:
+                            info["Open Ports"] = info.get("Open Ports", []) + [
+                                packet["TCP"].dport
+                            ]
+                            if user_agent:
+                                info["http server"] = True
 
                     info["IP"] = ip
-                    return info
-        return None
+                    info["Count"] = count
+        return info if info else None
 
     def get_info(self):
         """
@@ -114,13 +151,17 @@ class AnalyzeNetwork:
             sender_info = {}
             receiver_info = {}
 
+            # this isn't in the definition because the IDE doesn't like it
+            sender_info["Count"] = 1
+            receiver_info["Count"] = 1
+
             if packet.haslayer("IP"):
                 sender_info["IP"] = packet["IP"].src
                 receiver_info["IP"] = packet["IP"].dst
 
                 if packet.time:
-                    sender_info["Time"] = str(packet.time)
-                    receiver_info["Time"] = str(packet.time)
+                    sender_info["First Seen"] = str(packet.time)
+                    receiver_info["First Seen"] = str(packet.time)
 
             else:
                 sender_info["IP"] = "Unknown"
@@ -154,12 +195,69 @@ class AnalyzeNetwork:
                 sender_info["Vendor"] = "Unknown"
                 receiver_info["MAC"] = "Unknown"
                 receiver_info["Vendor"] = "Unknown"
-            # check if sender_info is already in result
-            if sender_info not in result:
+
+            if packet.haslayer("TCP"):
+                user_agent = self.get_user_agent(packet["TCP"])
+                if user_agent:
+                    sender_info["User Agent"] = user_agent
+                    receiver_info["http server"] = True
+
+                if packet["IP"].src == sender_info["IP"] and packet["TCP"].sport:
+                    sender_info["Open Ports"] = sender_info.get("Open Ports", []) + [
+                        packet["TCP"].sport
+                    ]
+
+                if packet["IP"].dst == receiver_info["IP"] and packet["TCP"].dport:
+                    receiver_info["Open Ports"] = receiver_info.get(
+                        "Open Ports", []
+                    ) + [packet["TCP"].dport]
+
+            # check if mac is already in result
+            existing_sender = next(
+                (d for d in result if d.get("MAC") == sender_info.get("MAC")), None
+            )
+            if existing_sender:
+                for key, value in sender_info.items():
+                    if key == "Count":
+                        existing_sender[key] += 1
+                    if key not in existing_sender or existing_sender[key] == "Unknown":
+                        existing_sender[key] = value
+            else:
                 result.append(sender_info)
-            if receiver_info not in result:
+
+            existing_receiver = next(
+                (d for d in result if d.get("MAC") == receiver_info.get("MAC")), None
+            )
+            if existing_receiver:
+                for key, value in receiver_info.items():
+                    if key == "Count":
+                        existing_receiver[key] += 1
+                    if (
+                        key not in existing_receiver
+                        or existing_receiver[key] == "Unknown"
+                    ):
+                        existing_receiver[key] = value
+            else:
                 result.append(receiver_info)
         return result
+
+    def get_user_agent(self, tcp):
+        """returns user agent string from given tcp packet if exists, else None"""
+        if tcp.haslayer("Raw"):
+            raw = bytes(tcp["Raw"].load)
+            marker = b"User-Agent:"
+            start = raw.find(marker)
+            if start != -1:
+                end = raw.find(b"\r\n", start)
+                if end == -1:
+                    end = len(raw)
+                user_agent = (
+                    raw[start + len(marker) : end]
+                    .decode("ascii", errors="ignore")
+                    .strip()
+                )
+                return user_agent
+        return None
 
     def guess_os(self, ip):
         """returns assumed operating system based on ttl value or data value of ping packets from the given ip address"""
