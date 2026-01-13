@@ -56,6 +56,9 @@ class AnalyzeNetwork:
                     else:
                         info["IPv6"] = "Unknown"
 
+                    if packet.time:
+                        info["Time"] = str(packet.time)
+
                     return info
         return None
 
@@ -94,6 +97,9 @@ class AnalyzeNetwork:
                     else:
                         info["IPv6"] = "Unknown"
 
+                    if packet.time:
+                        info["Time"] = str(packet.time)
+
                     info["IP"] = ip
                     return info
         return None
@@ -111,6 +117,11 @@ class AnalyzeNetwork:
             if packet.haslayer("IP"):
                 sender_info["IP"] = packet["IP"].src
                 receiver_info["IP"] = packet["IP"].dst
+
+                if packet.time:
+                    sender_info["Time"] = str(packet.time)
+                    receiver_info["Time"] = str(packet.time)
+
             else:
                 sender_info["IP"] = "Unknown"
                 receiver_info["IP"] = "Unknown"
@@ -143,7 +154,6 @@ class AnalyzeNetwork:
                 sender_info["Vendor"] = "Unknown"
                 receiver_info["MAC"] = "Unknown"
                 receiver_info["Vendor"] = "Unknown"
-
             # check if sender_info is already in result
             if sender_info not in result:
                 result.append(sender_info)
@@ -152,20 +162,28 @@ class AnalyzeNetwork:
         return result
 
     def guess_os(self, ip):
-        """returns assumed operating system based on ttl value of packets from given IP"""
+        """returns assumed operating system based on ttl value or data value of ping packets from the given ip address"""
         # ip is expected to be the return type of get_info_by_ip or similar
         ip = ip["IP"]
         packets = rdpcap(self.pcap_path)
         for packet in packets:
             if packet.haslayer("IP") and packet["IP"].src == ip:
                 ttl = packet["IP"].ttl
-                if ttl <= 64:
+                if 60 <= ttl <= 64:  # give some range for tolerance
                     return ["Linux", "Unix", "MacOS"]
-                if ttl <= 128:
+                if 120 <= ttl <= 128:  # give some range for tolerance
                     return "Windows"
-                if ttl <= 255:
+                if 251 <= ttl <= 255:  # give some range for tolerance
                     return ["Cisco", "Network Device"]
-                return "Unknown"
+            if packet.haslayer("ICMP") and packet["IP"].src == ip:
+                data = bytes(packet["ICMP"].payload)
+                if data == b"abcdefghijklmnopqrstuvwabcdefghi":
+                    return "Windows"
+                elif (
+                    data
+                    == b"\x00\x887f\x00\x00\x00\x00\x19\x1d\n\x00\x00\x00\x00\x00\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./01234567"
+                ):
+                    return ["Linux", "Unix", "MacOS"]
         return "Unknown"
 
     def __repr__(self):
